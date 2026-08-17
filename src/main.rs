@@ -108,7 +108,7 @@ use argh::FromArgs;
 /// Configuration of the conversion.
 #[derive(FromArgs, Debug, Clone)]
 struct Config {
-    /// the image format of the output images
+    /// the format of the output images
     #[argh(option, short = 'f', default = "OutputFormat::Png")]
     format: OutputFormat,
     /// interpolation used when sampling source image
@@ -117,7 +117,7 @@ struct Config {
     /// the input equirectangular image's path
     #[argh(positional)]
     input: PathBuf,
-    /// the directory to put the output images in, creates if doesn't exist
+    /// the directory to put the output images in, creates if not exists
     #[argh(positional)]
     output: PathBuf,
     #[argh(option, short = 's', default = "512")]
