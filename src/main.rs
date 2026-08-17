@@ -1,4 +1,4 @@
-use image::{DynamicImage, GenericImage, ImageBuffer, Pixel, Rgba, RgbaImage};
+use image::{DynamicImage, GenericImage, GenericImageView, ImageBuffer, Pixel, Rgba, RgbaImage};
 use rayon::prelude::*;
 use std::fs::create_dir_all;
 use std::{fmt::Display, path::PathBuf};
@@ -9,62 +9,34 @@ use math::{Interpolation, SphericalAngle, Vector3};
 
 use crate::math::{reinhard_tone_mapping_rgb, reinhard_tone_mapping_rgba};
 
-type ImageBufferData = ImageBuffer<Rgba<u8>, Vec<u8>>;
-
 fn main() -> Result<()> {
     let config: Config = argh::from_env();
     let path = &config.input;
     let start_time = std::time::Instant::now();
-    let img = image::open(path)?;
+
+    let mut reader = image::ImageReader::open(path)?;
+    if config.unlimited {
+        reader.no_limits();
+    }
+    let img = reader.decode()?;
     let elapsed = start_time.elapsed();
     println!("Read and Parse: {elapsed:?}");
     let width = img.width();
     let height = img.height();
     if width != height * 2 {
-        panic!("Image width should be exact 2 times of image height.")
+        panic!("The image width must be exactly twice the height.")
     }
 
     create_dir_all(&config.output)?;
     let start_time = std::time::Instant::now();
-    let exposure = config.exposure;
-    let img = if config.tone_mapping {
-        match img {
-            DynamicImage::ImageRgb32F(image_buffer) => {
-                let (width, height) = image_buffer.dimensions();
-                let mut new_image = DynamicImage::new_rgb8(width, height);
-                for x in 0..width {
-                    for y in 0..height {
-                        let pixel = image_buffer.get_pixel(x, y);
-                        let mapped = reinhard_tone_mapping_rgb(*pixel, exposure);
-                        new_image.put_pixel(x, y, mapped);
-                    }
-                }
-                new_image
-            }
-            DynamicImage::ImageRgba32F(image_buffer) => {
-                let (width, height) = image_buffer.dimensions();
-                let mut new_image = DynamicImage::new_rgba8(width, height);
-                for x in 0..width {
-                    for y in 0..height {
-                        let pixel = image_buffer.get_pixel(x, y);
-                        let mapped = reinhard_tone_mapping_rgba(*pixel, exposure);
-                        new_image.put_pixel(x, y, mapped);
-                    }
-                }
-                new_image
-            }
-            _ => img,
-        }
-    } else {
-        img
-    };
+
     // convert equirect to cubemaps
-    let mut data = convert(&config, img);
+    let mut images = reproject(&config, img);
     let elapsed = start_time.elapsed();
     println!("Convert: {:?}", elapsed);
     if config.rotate {
         let start_time = std::time::Instant::now();
-        data = rotate(data);
+        images = rotate(images);
         let elapsed = start_time.elapsed();
         println!("Rotate: {:?}", elapsed);
     }
@@ -72,23 +44,76 @@ fn main() -> Result<()> {
     let size = config.size;
 
     use image::EncodableLayout as _;
-    use rayon::prelude::*;
 
-    // write images to disk
-    data.par_iter().for_each(|(img, side)| {
-        let (bytes, color_type) = if config.format.is_rgb() {
-            let (width, height) = img.dimensions();
-            let buffer = ImageBuffer::from_fn(width, height, |x, y| {
-                let p = img.get_pixel(x, y);
-                p.to_rgb()
-            });
-            (buffer.as_bytes().to_vec(), image::ColorType::Rgb8)
+    // tonemapping, format conversion + writting to disk
+    images.into_iter().for_each(|(img, side)| {
+        let exposure = config.exposure;
+        // tonemapped image will be converted to rgb8 or rgba8
+        let img = if config.tone_mapping {
+            match img {
+                DynamicImage::ImageRgb32F(image_buffer) => {
+                    let (width, height) = image_buffer.dimensions();
+                    let mut new_image = DynamicImage::new_rgb8(width, height);
+                    for x in 0..width {
+                        for y in 0..height {
+                            let pixel = image_buffer.get_pixel(x, y);
+                            let mapped = reinhard_tone_mapping_rgb(*pixel, exposure);
+                            new_image.put_pixel(x, y, mapped);
+                        }
+                    }
+                    new_image
+                }
+                DynamicImage::ImageRgba32F(image_buffer) => {
+                    let (width, height) = image_buffer.dimensions();
+                    let mut new_image = DynamicImage::new_rgba8(width, height);
+                    for x in 0..width {
+                        for y in 0..height {
+                            let pixel = image_buffer.get_pixel(x, y);
+                            let mapped = reinhard_tone_mapping_rgba(*pixel, exposure);
+                            new_image.put_pixel(x, y, mapped);
+                        }
+                    }
+                    new_image
+                }
+                _ => img,
+            }
         } else {
-            (img.as_bytes().to_vec(), image::ColorType::Rgba8)
+            img
+        };
+        let has_alpha = img.color().has_alpha();
+        let buffer = match config.format {
+            OutputFormat::Jpg => img.into_rgb8().into_vec(),
+            OutputFormat::Png => img.into_rgba8().into_vec(),
+            OutputFormat::Webp => {
+                if has_alpha {
+                    img.into_rgba8().into_vec()
+                } else {
+                    img.into_rgb8().into_vec()
+                }
+            }
+            OutputFormat::Hdr => {
+                let vec = img.into_rgb32f().into_vec();
+                bytemuck::cast_slice(&vec).to_vec()
+            }
+            OutputFormat::Exr => {
+                if has_alpha {
+                    let vec = img.to_rgba32f().into_vec();
+                    bytemuck::cast_slice(&vec).to_vec()
+                } else {
+                    let vec = img.to_rgb32f().into_vec();
+                    bytemuck::cast_slice(&vec).to_vec()
+                }
+            }
+        };
+        let color_type = match config.format {
+            OutputFormat::Jpg => image::ColorType::Rgb8,
+            OutputFormat::Png | OutputFormat::Webp => image::ColorType::Rgba8,
+            OutputFormat::Hdr => image::ColorType::Rgb32F,
+            OutputFormat::Exr => image::ColorType::Rgba32F,
         };
         image::save_buffer_with_format(
             config.output.join(format!("{}.{}", side, &config.format)),
-            &bytes,
+            &buffer,
             size,
             size,
             color_type,
@@ -96,12 +121,11 @@ fn main() -> Result<()> {
         )
         .unwrap();
     });
-    let elapsed = start_time.elapsed();
-    println!("Save: {:?}", elapsed);
     println!(
         r#"Generated images has been saved in "{}""#,
         config.output.display()
     );
+
     Ok(())
 }
 use argh::FromArgs;
@@ -132,12 +156,17 @@ struct Config {
     /// exposure of tone mapping
     #[argh(option, short = 'e', default = "1.0")]
     exposure: f32,
+    /// remove the limits on image size and memory usage (could cause OOM on large images or decompression bombs)
+    #[argh(switch, short = 'u')]
+    unlimited: bool,
 }
 #[derive(argh::FromArgValue, Clone, Debug, Copy)]
 enum OutputFormat {
     Jpg,
     Png,
     Webp,
+    Hdr,
+    Exr,
 }
 impl From<OutputFormat> for image::ImageFormat {
     fn from(value: OutputFormat) -> Self {
@@ -145,6 +174,8 @@ impl From<OutputFormat> for image::ImageFormat {
             OutputFormat::Jpg => image::ImageFormat::Jpeg,
             OutputFormat::Png => image::ImageFormat::Png,
             OutputFormat::Webp => image::ImageFormat::WebP,
+            OutputFormat::Hdr => image::ImageFormat::Hdr,
+            OutputFormat::Exr => image::ImageFormat::OpenExr,
         }
     }
 }
@@ -154,6 +185,8 @@ impl Display for OutputFormat {
             OutputFormat::Jpg => write!(f, "jpg"),
             OutputFormat::Png => write!(f, "png"),
             OutputFormat::Webp => write!(f, "webp"),
+            OutputFormat::Hdr => write!(f, "hdr"),
+            OutputFormat::Exr => write!(f, "exr"),
         }
     }
 }
@@ -161,10 +194,13 @@ impl OutputFormat {
     pub fn is_rgb(&self) -> bool {
         matches!(self, OutputFormat::Jpg)
     }
+    pub fn is_hdr(&self) -> bool {
+        matches!(self, OutputFormat::Hdr | OutputFormat::Exr)
+    }
 }
 
 #[derive(Clone, Copy)]
-enum Side {
+pub enum Side {
     Front,
     Back,
     Left,
@@ -186,7 +222,7 @@ impl Display for Side {
 }
 
 /// convert 1 equirect image to cubemaps (6 squared images)
-fn convert(config: &Config, img: DynamicImage) -> Vec<(ImageBufferData, Side)> {
+fn reproject(config: &Config, img: DynamicImage) -> Vec<(DynamicImage, Side)> {
     // use rayon::ParIter;
     use Side::*;
     let size = config.size;
@@ -196,7 +232,7 @@ fn convert(config: &Config, img: DynamicImage) -> Vec<(ImageBufferData, Side)> {
         .map(|side| {
             let size_int = size;
             let size = size as f32;
-            let mut square = RgbaImage::new(size_int, size_int);
+            let mut square = DynamicImage::new(size_int, size_int, img.color());
             for x in 0..size_int {
                 let xf = x as f32;
                 for y in 0..size_int {
@@ -212,26 +248,26 @@ fn convert(config: &Config, img: DynamicImage) -> Vec<(ImageBufferData, Side)> {
                     };
                     let spr = SphericalAngle::from_normalized_vector(pos.normalize());
                     let uv = spr.to_uv();
-                    let p = interpolation.sample(&img, uv);
-                    square.put_pixel(x, y, p);
+                    if let Some(p) = interpolation.sample(&img, uv) {
+                        square.put_pixel(x, y, p);
+                    }
                 }
             }
             (square, *side)
         })
         .collect()
 }
-fn rotate(entries: Vec<(ImageBufferData, Side)>) -> Vec<(ImageBufferData, Side)> {
+pub fn rotate(entries: Vec<(DynamicImage, Side)>) -> Vec<(DynamicImage, Side)> {
     use image::imageops::*;
     entries
         .into_par_iter()
         .map(|(img, side)| {
             let image = match side {
-                Side::Top => img,
-                Side::Bottom => rotate180(&img),
-                Side::Left => rotate180(&img),
-                Side::Right => img,
-                Side::Front => rotate270(&img),
-                Side::Back => rotate90(&img),
+                Side::Top | Side::Right => img,
+                Side::Bottom => DynamicImage::from(rotate180(&img)),
+                Side::Left => DynamicImage::from(rotate180(&img)),
+                Side::Front => DynamicImage::from(rotate270(&img)),
+                Side::Back => DynamicImage::from(rotate90(&img)),
             };
             (image, side)
         })

@@ -1,4 +1,4 @@
-use image::{imageops::sample_nearest, DynamicImage, Rgb, Rgba};
+use image::{imageops::sample_nearest, DynamicImage, GenericImageView, Pixel, Rgb, Rgba};
 
 /// spherical coord without radius
 #[derive(Debug)]
@@ -28,36 +28,36 @@ pub enum Interpolation {
     Nearest,
 }
 impl Interpolation {
-    pub fn sample(&self, img: &DynamicImage, uv: (f32, f32)) -> Rgba<u8> {
+    pub fn sample<P>(&self, img: &impl GenericImageView<Pixel = P>, uv: (f32, f32)) -> Option<P>
+    where
+        P: Pixel,
+    {
         use image::imageops::sample_bilinear;
         match self {
             Self::Linear => sample_bilinear(img, uv.0, uv.1),
             Self::Nearest => sample_nearest(img, uv.0, uv.1),
         }
-        .unwrap_or(Rgba::<u8>([0, 0, 0, 255]))
     }
 }
 
 pub fn reinhard_tone_mapping_rgba(color: Rgba<f32>, exposure: f32) -> Rgba<u8> {
-    let r = (color[0] * exposure) / (1.0 + color[0] * exposure);
-    let g = (color[1] * exposure) / (1.0 + color[1] * exposure);
-    let b = (color[2] * exposure) / (1.0 + color[2] * exposure);
-    let r = (r * 255.0).round() as u8;
-    let g = (g * 255.0).round() as u8;
-    let b = (b * 255.0).round() as u8;
+    let [r, g, b] = reinhard_base([color[0], color[1], color[2]], exposure);
     let a = (color[3] * 255.0).round() as u8;
-
     [r, g, b, a].into()
 }
 pub fn reinhard_tone_mapping_rgb(color: Rgb<f32>, exposure: f32) -> Rgba<u8> {
-    let r = (color[0] * exposure) / (1.0 + color[0] * exposure);
-    let g = (color[1] * exposure) / (1.0 + color[1] * exposure);
-    let b = (color[2] * exposure) / (1.0 + color[2] * exposure);
+    let [r, g, b] = reinhard_base([color[0], color[1], color[2]], exposure);
+    [r, g, b, 255].into()
+}
+
+fn reinhard_base(rgb: [f32; 3], exposure: f32) -> [u8; 3] {
+    let r = (rgb[0] * exposure) / (1.0 + rgb[0] * exposure);
+    let g = (rgb[1] * exposure) / (1.0 + rgb[1] * exposure);
+    let b = (rgb[2] * exposure) / (1.0 + rgb[2] * exposure);
     let r = (r * 255.0).round() as u8;
     let g = (g * 255.0).round() as u8;
     let b = (b * 255.0).round() as u8;
-
-    [r, g, b, 255].into()
+    [r, g, b]
 }
 
 #[derive(Debug, Copy, Clone)]
