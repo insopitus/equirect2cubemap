@@ -12,8 +12,7 @@ use crate::math::{reinhard_tone_mapping_rgb, reinhard_tone_mapping_rgba};
 type ImageBufferData = ImageBuffer<Rgba<u8>, Vec<u8>>;
 
 fn main() -> Result<()> {
-    use clap::Parser;
-    let config = Config::parse();
+    let config: Config = argh::from_env();
     let path = &config.input;
     let start_time = std::time::Instant::now();
     let img = image::open(path)?;
@@ -105,33 +104,36 @@ fn main() -> Result<()> {
     );
     Ok(())
 }
-
-#[derive(clap::Parser, Debug, Clone)]
+use argh::FromArgs;
+/// Configuration of the conversion.
+#[derive(FromArgs, Debug, Clone)]
 struct Config {
     /// the image format of the output images
-    #[arg(short, long, value_enum,default_value_t = OutputFormat::Png)]
+    #[argh(option, short = 'f', default = "OutputFormat::Png")]
     format: OutputFormat,
     /// interpolation used when sampling source image
-    #[arg(short, long,value_enum, default_value_t = Interpolation::Linear)]
+    #[argh(option, short = 'i', default = "Interpolation::Linear")]
     interpolation: Interpolation,
     /// the input equirectangular image's path
+    #[argh(positional)]
     input: PathBuf,
     /// the directory to put the output images in, creates if doesn't exist
+    #[argh(positional)]
     output: PathBuf,
-    #[arg(short, long, default_value_t = 512)]
+    #[argh(option, short = 's', default = "512")]
     /// size (px) of the output images, width = height
     size: u32,
     /// rotate to a z-up skybox if you use it in a y-up renderer
-    #[arg(short, long, default_value_t = false)]
+    #[argh(option, short = 'r', default = "false")]
     rotate: bool,
     /// enable tone mapping (Reinhard)
-    #[arg(short, long, default_value_t = false)]
+    #[argh(option, short = 't', default = "false")]
     tone_mapping: bool,
     /// exposure of tone mapping
-    #[arg(short, long, default_value_t = 1.0)]
+    #[argh(option, short = 'e', default = "1.0")]
     exposure: f32,
 }
-#[derive(clap::ValueEnum, Clone, Debug, Copy)]
+#[derive(argh::FromArgValue, Clone, Debug, Copy)]
 enum OutputFormat {
     Jpg,
     Png,

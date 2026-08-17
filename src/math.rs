@@ -22,7 +22,7 @@ impl SphericalAngle {
     }
 }
 
-#[derive(clap::ValueEnum, Clone, Debug)]
+#[derive(argh::FromArgValue, Clone, Debug)]
 pub enum Interpolation {
     Linear,
     Nearest,
