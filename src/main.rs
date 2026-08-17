@@ -124,10 +124,10 @@ struct Config {
     /// size (px) of the output images, width = height
     size: u32,
     /// rotate to a z-up skybox if you use it in a y-up renderer
-    #[argh(option, short = 'r', default = "false")]
+    #[argh(switch, short = 'r')]
     rotate: bool,
     /// enable tone mapping (Reinhard)
-    #[argh(option, short = 't', default = "false")]
+    #[argh(switch, short = 't')]
     tone_mapping: bool,
     /// exposure of tone mapping
     #[argh(option, short = 'e', default = "1.0")]
