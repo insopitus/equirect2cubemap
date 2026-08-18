@@ -77,6 +77,7 @@ fn main() -> Result<()> {
             img
         };
         let has_alpha = img.color().has_alpha();
+
         let (buffer, color_type) = match config.format {
             OutputFormat::Jpg => (img.into_rgb8().into_vec(), image::ColorType::Rgb8),
             OutputFormat::Png => (img.into_rgba8().into_vec(), image::ColorType::Rgba8),
@@ -90,23 +91,19 @@ fn main() -> Result<()> {
             OutputFormat::Hdr => {
                 let vec = img.into_rgb32f().into_vec();
                 (
-                    bytemuck::cast_slice(&vec).to_vec(),
+                    // TODO: cast_slice + into::<Vec<u8>> causes a copy while cast_vec panics;
+                    // can we avoid the copy?
+                    bytemuck::cast_slice(&vec).into(),
                     image::ColorType::Rgb32F,
                 )
             }
             OutputFormat::Exr => {
                 if has_alpha {
-                    let vec = img.to_rgba32f().into_vec();
-                    (
-                        bytemuck::cast_slice(&vec).to_vec(),
-                        image::ColorType::Rgba32F,
-                    )
+                    let vec = img.into_rgba32f().into_vec();
+                    (bytemuck::cast_slice(&vec).into(), image::ColorType::Rgba32F)
                 } else {
-                    let vec = img.to_rgb32f().into_vec();
-                    (
-                        bytemuck::cast_slice(&vec).to_vec(),
-                        image::ColorType::Rgb32F,
-                    )
+                    let vec = img.into_rgb32f().into_vec();
+                    (bytemuck::cast_slice(&vec).into(), image::ColorType::Rgb32F)
                 }
             }
         };
