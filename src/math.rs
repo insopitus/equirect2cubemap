@@ -1,4 +1,4 @@
-use image::{imageops::sample_nearest, DynamicImage, GenericImageView, Pixel, Rgb, Rgba};
+use image::{imageops::sample_nearest, GenericImageView, Pixel, Rgb, Rgba};
 
 /// spherical coord without radius
 #[derive(Debug)]

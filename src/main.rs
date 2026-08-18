@@ -1,4 +1,4 @@
-use image::{DynamicImage, GenericImage, GenericImageView, ImageBuffer, Pixel, Rgba, RgbaImage};
+use image::{DynamicImage, GenericImage};
 use rayon::prelude::*;
 use std::fs::create_dir_all;
 use std::{fmt::Display, path::PathBuf};
@@ -40,11 +40,7 @@ fn main() -> Result<()> {
         let elapsed = start_time.elapsed();
         println!("Rotate: {:?}", elapsed);
     }
-    let start_time = std::time::Instant::now();
     let size = config.size;
-
-    use image::EncodableLayout as _;
-
     // tonemapping, format conversion + writting to disk
     images.into_iter().for_each(|(img, side)| {
         let exposure = config.exposure;
@@ -81,36 +77,40 @@ fn main() -> Result<()> {
             img
         };
         let has_alpha = img.color().has_alpha();
-        let buffer = match config.format {
-            OutputFormat::Jpg => img.into_rgb8().into_vec(),
-            OutputFormat::Png => img.into_rgba8().into_vec(),
+        let (buffer, color_type) = match config.format {
+            OutputFormat::Jpg => (img.into_rgb8().into_vec(), image::ColorType::Rgb8),
+            OutputFormat::Png => (img.into_rgba8().into_vec(), image::ColorType::Rgba8),
             OutputFormat::Webp => {
                 if has_alpha {
-                    img.into_rgba8().into_vec()
+                    (img.into_rgba8().into_vec(), image::ColorType::Rgba8)
                 } else {
-                    img.into_rgb8().into_vec()
+                    (img.into_rgb8().into_vec(), image::ColorType::Rgb8)
                 }
             }
             OutputFormat::Hdr => {
                 let vec = img.into_rgb32f().into_vec();
-                bytemuck::cast_slice(&vec).to_vec()
+                (
+                    bytemuck::cast_slice(&vec).to_vec(),
+                    image::ColorType::Rgb32F,
+                )
             }
             OutputFormat::Exr => {
                 if has_alpha {
                     let vec = img.to_rgba32f().into_vec();
-                    bytemuck::cast_slice(&vec).to_vec()
+                    (
+                        bytemuck::cast_slice(&vec).to_vec(),
+                        image::ColorType::Rgba32F,
+                    )
                 } else {
                     let vec = img.to_rgb32f().into_vec();
-                    bytemuck::cast_slice(&vec).to_vec()
+                    (
+                        bytemuck::cast_slice(&vec).to_vec(),
+                        image::ColorType::Rgb32F,
+                    )
                 }
             }
         };
-        let color_type = match config.format {
-            OutputFormat::Jpg => image::ColorType::Rgb8,
-            OutputFormat::Png | OutputFormat::Webp => image::ColorType::Rgba8,
-            OutputFormat::Hdr => image::ColorType::Rgb32F,
-            OutputFormat::Exr => image::ColorType::Rgba32F,
-        };
+
         image::save_buffer_with_format(
             config.output.join(format!("{}.{}", side, &config.format)),
             &buffer,
@@ -132,10 +132,10 @@ use argh::FromArgs;
 /// Configuration of the conversion.
 #[derive(FromArgs, Debug, Clone)]
 struct Config {
-    /// the format of the output images
+    /// the format of the output images [possible values: jpg, png, webp, hdr, exr]
     #[argh(option, short = 'f', default = "OutputFormat::Png")]
     format: OutputFormat,
-    /// interpolation used when sampling source image
+    /// interpolation used when sampling source image [possible values: linear, nearest]
     #[argh(option, short = 'i', default = "Interpolation::Linear")]
     interpolation: Interpolation,
     /// the input equirectangular image's path
@@ -188,14 +188,6 @@ impl Display for OutputFormat {
             OutputFormat::Hdr => write!(f, "hdr"),
             OutputFormat::Exr => write!(f, "exr"),
         }
-    }
-}
-impl OutputFormat {
-    pub fn is_rgb(&self) -> bool {
-        matches!(self, OutputFormat::Jpg)
-    }
-    pub fn is_hdr(&self) -> bool {
-        matches!(self, OutputFormat::Hdr | OutputFormat::Exr)
     }
 }
 
