@@ -1,5 +1,5 @@
 ```
-Usage: equirect2cubemap.exe [-f <format>] [-i <interpolation>] [-s <size>] [-r] [-t] [-e <exposure>] [-u] [--] <input> <output>
+Usage: equirect2cubemap.exe [-f <format>] [-i <interpolation>] [-s <size>] [-p] [-r] [-t] [-e <exposure>] [-u] [--] <input> <output>
 
 Configuration of the conversion.
 
@@ -13,8 +13,11 @@ Options:
                     webp, hdr, exr]
   -i, --interpolation
                     interpolation used when sampling source image [possible
-                    values: linear, nearest]
+                    values: linear, nearest, catmull-rom, mitchell, lanczos2,
+                    lanczos3]
   -s, --size        size (px) of the output images, width = height
+  -p, --pot         force a power-of-two size (ceiling) for the output images
+                    (if the size is not specified)
   -r, --rotate      rotate to a z-up skybox if you use it in a y-up renderer
   -t, --tone-mapping
                     enable tone mapping (Reinhard)
