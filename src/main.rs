@@ -4,10 +4,13 @@ use std::fs::create_dir_all;
 use std::{fmt::Display, path::PathBuf};
 
 mod math;
+mod sampling;
 use anyhow::{Ok, Result};
-use math::{Interpolation, SphericalAngle, Vector3};
+use math::{SphericalAngle, Vector3};
+use sampling::SampleMethod;
 
 use crate::math::{reinhard_tone_mapping_rgb, reinhard_tone_mapping_rgba};
+use crate::sampling::sample;
 
 fn main() -> Result<()> {
     let config: Config = argh::from_env();
@@ -30,8 +33,18 @@ fn main() -> Result<()> {
     create_dir_all(&config.output)?;
     let start_time = std::time::Instant::now();
 
+    let size = if let Some(size) = config.size {
+        size
+    } else {
+        let size = img.width() / 4;
+        if config.pot {
+            size.next_power_of_two()
+        } else {
+            size
+        }
+    };
     // convert equirect to cubemaps
-    let mut images = reproject(&config, img);
+    let mut images = reproject(size, &config.interpolation, img);
     let elapsed = start_time.elapsed();
     println!("Convert: {:?}", elapsed);
     if config.rotate {
@@ -40,7 +53,6 @@ fn main() -> Result<()> {
         let elapsed = start_time.elapsed();
         println!("Rotate: {:?}", elapsed);
     }
-    let size = config.size;
     // tonemapping, format conversion + writting to disk
     images.into_iter().for_each(|(img, side)| {
         let exposure = config.exposure;
@@ -132,18 +144,21 @@ struct Config {
     /// the format of the output images [possible values: jpg, png, webp, hdr, exr]
     #[argh(option, short = 'f', default = "OutputFormat::Png")]
     format: OutputFormat,
-    /// interpolation used when sampling source image [possible values: linear, nearest]
-    #[argh(option, short = 'i', default = "Interpolation::Linear")]
-    interpolation: Interpolation,
+    /// interpolation used when sampling source image [possible values: linear, nearest, catmull-rom, mitchell, lanczos2, lanczos3]
+    #[argh(option, short = 'i', default = "SampleMethod::Linear")]
+    interpolation: SampleMethod,
     /// the input equirectangular image's path
     #[argh(positional)]
     input: PathBuf,
     /// the directory to put the output images in, creates if not exists
     #[argh(positional)]
     output: PathBuf,
-    #[argh(option, short = 's', default = "512")]
+    #[argh(option, short = 's')]
     /// size (px) of the output images, width = height
-    size: u32,
+    size: Option<u32>,
+    /// force a power-of-two size (ceiling) for the output images (if the size is not specified)
+    #[argh(switch, short = 'p')]
+    pot: bool,
     /// rotate to a z-up skybox if you use it in a y-up renderer
     #[argh(switch, short = 'r')]
     rotate: bool,
@@ -211,11 +226,12 @@ impl Display for Side {
 }
 
 /// convert 1 equirect image to cubemaps (6 squared images)
-fn reproject(config: &Config, img: DynamicImage) -> Vec<(DynamicImage, Side)> {
-    // use rayon::ParIter;
+fn reproject(
+    size: u32,
+    interpolation: &SampleMethod,
+    img: DynamicImage,
+) -> Vec<(DynamicImage, Side)> {
     use Side::*;
-    let size = config.size;
-    let interpolation = &config.interpolation;
     [Front, Back, Left, Right, Top, Bottom]
         .par_iter()
         .map(|side| {
@@ -237,9 +253,8 @@ fn reproject(config: &Config, img: DynamicImage) -> Vec<(DynamicImage, Side)> {
                     };
                     let spr = SphericalAngle::from_normalized_vector(pos.normalize());
                     let uv = spr.to_uv();
-                    if let Some(p) = interpolation.sample(&img, uv) {
-                        square.put_pixel(x, y, p);
-                    }
+                    let p = sample(&img, uv.0, uv.1, *interpolation);
+                    square.put_pixel(x, y, p);
                 }
             }
             (square, *side)
